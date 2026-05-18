@@ -67,7 +67,16 @@ Parse the whisper JSON's word timestamps and compute a list of (start, end) inte
 **Also cut:**
 
 - Filler words: `um`, `uh`, `umm`, `uhh`, `er`, `erm` (with 50ms padding around each)
-- Obvious false starts and immediate repetitions (e.g. `"this is not this is real"` → drop `"this is not"`)
+- False starts and mid-sentence corrections (e.g. `"this is not — this is real"` → drop `"this is not"`)
+- **Re-takes / repeated sentences — keep ONLY the last version.** If the speaker says a sentence, then re-says it (verbatim or near-verbatim), assume the later take is the keeper and cut every earlier attempt. This includes:
+  - Verbatim repeats (`"Tella is the fastest. Tella is the fastest."` → keep the second)
+  - Near-verbatim re-tries where wording was tweaked (`"Tella is the fastest screen recorder. Tella is the fastest screen tool out there."` → keep the second)
+  - Multiple failed takes in a row — drop ALL earlier attempts, keep only the final clean one
+  - "Wait" / "sorry" / "let me try that again" / "scratch that" / "one more time" markers — cut the marker AND everything before it back to the start of that sentence/thought
+
+**How to detect re-takes:** scan the whisper transcript for sentences (or 4+ word phrases) whose normalized text (lowercase, punctuation stripped) appears more than once within a 30-second window. Treat the LAST occurrence as canonical and mark all earlier occurrences + the gap between them as cut.
+
+When in doubt about whether two phrasings are "the same sentence re-taken" vs. "the speaker making the same point twice on purpose," surface it in the plan (Step 3) and let the user decide before rendering.
 
 **NEVER cut laughs.** Whisper sometimes emits long silent gaps where there's actually audible laughter. Before applying any silence cut, check audio amplitude:
 
@@ -93,7 +102,9 @@ Cleaned duration: 5m 58s
 Cut: 1m 27s (20%)
 Hard cuts (dead air > 5s): N
 Filler hits: N
+Re-takes dropped: N  (list each — "00:42 → 00:51: 'Tella is the fastest...' (3 takes, kept last)")
 Notable preserved long pauses: list timestamps + context
+Ambiguous re-takes (need user call): list any
 ```
 
 Wait for "go" before rendering. Don't render speculatively.
@@ -142,6 +153,7 @@ ffmpeg -y -hwaccel videotoolbox -i /tmp/cut-video/$NAME/proxy.mp4 \
 - **Don't trim a 10s+ "silence" without checking amplitude** — that's usually laughter, a thinking pause, or a setup-payoff beat.
 - **Don't whisper the entire raw source if a proxy exists.** Run whisper against `audio.wav` extracted from the proxy.
 - **Don't re-encode audio twice.** If you only changed video, use `-c:a copy` to skip an unnecessary AAC pass.
+- **Don't leave re-takes in.** If a sentence shows up twice in a 30s window, the speaker almost certainly fluffed the first take. Default to keeping the LAST occurrence and dropping every earlier attempt. Surface it in the plan if it's ambiguous, but never silently keep multiple takes of the same sentence.
 
 ## What this skill explicitly does NOT do
 

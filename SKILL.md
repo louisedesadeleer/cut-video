@@ -11,6 +11,7 @@ Tighten a long-form recording: remove silences, fillers, mistakes, and dead air.
 
 - Video file path (the user will provide; otherwise ask)
 - Optional: tone preference (`playful` / `sentimental` / `documentary`) — affects how aggressively to trim comedic pauses. Default: `playful`.
+- Optional: strictness (`strict` / `default` / `loose`) — affects how aggressively to drop retakes, false starts, and mistake-and-restart sentences (see Step 2.5). Default: `default`.
 
 ## Working directory
 
@@ -67,7 +68,7 @@ Parse the whisper JSON's word timestamps and compute a list of (start, end) inte
 **Also cut:**
 
 - Filler words: `um`, `uh`, `umm`, `uhh`, `er`, `erm` (with 50ms padding around each)
-- Obvious false starts and immediate repetitions (e.g. `"this is not this is real"` → drop `"this is not"`)
+- False starts, retakes, and mistake-and-restart sentences — see **Step 2.5** for the explicit detection rules. Don't try to handle these in this step's gap heuristic; they need dedicated transcript analysis.
 
 **NEVER cut laughs.** Whisper sometimes emits long silent gaps where there's actually audible laughter. Before applying any silence cut, check audio amplitude:
 
@@ -82,6 +83,58 @@ If a flagged "silence" window has peaks > -30dB, it contains content — keep it
 - `playful` (default): apply the heuristic above
 - `sentimental`: bump all preserved-pause targets up (0.6–2.5 → 0.8s, 2.5–5 → 2.5s, >5 → 1.0s). Don't rush emotional moments.
 - `documentary`: even more conservative; only cut > 8s dead air
+
+## Step 2.5 — Detect retakes and mistakes
+
+Raw recordings — especially first-take screen recordings — are full of full-sentence retakes ("Now that Claude can edit your videos..." attempted 3 times before the clean take) and mid-sentence corrections ("So I wanted to make a way. So I. So I created..."). Whisper transcribes all of them; the gap heuristic in Step 2 won't catch them because they have content and the gaps between them are short. Handle these explicitly here, after the gap pass but before rendering.
+
+### 2.5a — Mistake-and-restart sentences
+
+Scan the transcript for sentence boundaries that end in a **retract marker** within the last ~3 words. Retract markers:
+
+```
+wait,  /  sorry,  /  actually,  /  let me,  /  let me try that again  /
+no —  /  scratch that  /  hold on  /  okay so —  /  one sec
+```
+
+When you hit one: drop everything from the start of the marker's containing sentence back to the most recent sentence boundary (period, question mark, or > 0.8s gap). The next sentence is the clean take.
+
+### 2.5b — Retake detection via n-gram similarity
+
+For every sentence-initial 4-gram in the transcript (the first 4 content words of each sentence after stopword stripping), check whether the same or near-identical 4-gram appears again within the next ~45 seconds.
+
+A near-identical match = Jaccard similarity ≥ 0.75 OR ≥ 3 of the 4 content words match (case-insensitive, lemmatized). Stopwords to strip before comparison: `the, a, an, and, or, but, so, that, this, is, are, was, were, i, you, it, to, of, in, on, for`.
+
+When you find a repeated opening:
+
+1. The **later** occurrence is the keeper (people self-correct toward the clean take).
+2. Drop from the **earlier** occurrence's start through the moment just before the later occurrence begins (snap to the nearest sentence boundary or > 0.4s gap on each end).
+3. If there are 3+ matching openings (common with "Now that Claude can edit your videos..."), drop everything except the **last** one.
+
+Edge case: if two matching openings are spoken close together with no diverging content between them (< 1.5s gap, < 5 words between), treat the second as a stammer-and-restart rather than a full retake — drop only the first repetition, not everything between them.
+
+### 2.5c — Strictness scaling
+
+Apply the strictness input to the thresholds above:
+
+| Setting | Retake search window | Similarity threshold | Mistake-marker action |
+|---|---|---|---|
+| `strict` | 90s | Jaccard ≥ 0.60 OR 2/4 words | Also drop sentences containing inline `i mean,` / `or rather,` |
+| `default` | 45s | Jaccard ≥ 0.75 OR 3/4 words | As above |
+| `loose` | 20s | Jaccard ≥ 0.90 OR 4/4 words | Skip mistake-marker rule entirely |
+
+Default is reasonable for most recordings. Use `strict` for unscripted explainers and demos (lots of self-correction). Use `loose` for already-tight recordings where you just want filler and silence cleanup.
+
+### 2.5d — Surface the cuts
+
+Add to the Step 3 plan summary:
+
+```
+Retakes dropped:        N  (earliest of M attempts kept the final one)
+Mistake-restarts dropped: N  (sentences ending in 'wait,' / 'sorry,' / 'actually,' / ...)
+```
+
+For each retake, print the matched opening phrase and the timestamps of all attempts so the user can sanity-check before rendering. **Never cut a retake silently** — when the wrong take is kept it's the most visible failure mode of this skill.
 
 ## Step 3 — Show the plan, get confirmation
 
@@ -142,6 +195,8 @@ ffmpeg -y -hwaccel videotoolbox -i /tmp/cut-video/$NAME/proxy.mp4 \
 - **Don't trim a 10s+ "silence" without checking amplitude** — that's usually laughter, a thinking pause, or a setup-payoff beat.
 - **Don't whisper the entire raw source if a proxy exists.** Run whisper against `audio.wav` extracted from the proxy.
 - **Don't re-encode audio twice.** If you only changed video, use `-c:a copy` to skip an unnecessary AAC pass.
+- **Don't rely on Step 2's gap heuristic to catch retakes.** Full-sentence retakes have content and small gaps — they slip right through. Run Step 2.5 explicitly.
+- **Don't silently drop a retake.** Print the matched opening phrase and timestamps so the user can spot a wrong-take-kept before rendering.
 
 ## What this skill explicitly does NOT do
 

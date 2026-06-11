@@ -65,12 +65,30 @@ Why `tiny.en`: ~10× faster than `small.en`, and since we only need the words (n
 
 This is the spine of the skill. **MFA forced-aligns the whisper transcript text to the audio** and returns word boundaries at ~10–20ms precision, with true inter-word silences as explicit empty intervals. **All cut decisions (gaps, fillers, false starts, retakes) use MFA word times.**
 
-**One-time setup (conda is the only supported install path):**
+**Auto-install MFA (the skill does this itself — don't make the user do it).** Run this idempotent bootstrap at the start of every run; it's a no-op once everything's present (a few seconds), and a one-time ~2–3 min install on a fresh machine. Tell the user "installing MFA (one-time)…" only when it actually installs something.
+
 ```bash
-conda create -n mfa -c conda-forge montreal-forced-aligner -y
-conda run -n mfa mfa model download acoustic english_mfa
-conda run -n mfa mfa model download dictionary english_mfa
+# 1. Ensure conda exists (MFA's only supported install path). Install miniforge via brew if missing.
+if ! command -v conda >/dev/null 2>&1; then
+  echo "conda not found — installing miniforge (one-time)…"
+  brew install --cask miniforge || brew install miniforge
+  # make conda available in this shell
+  eval "$("$(brew --prefix)/bin/conda" shell.bash hook 2>/dev/null || conda shell.bash hook)"
+fi
+source "$(conda info --base)/etc/profile.d/conda.sh"
+
+# 2. Ensure the mfa env exists with MFA installed
+if ! conda env list | grep -q '^mfa\b'; then
+  echo "creating mfa conda env (one-time)…"
+  conda create -n mfa -c conda-forge montreal-forced-aligner -y
+fi
+
+# 3. Ensure the English acoustic model + dictionary are downloaded (idempotent; skips if present)
+conda run -n mfa mfa model download acoustic english_mfa  2>/dev/null || true
+conda run -n mfa mfa model download dictionary english_mfa 2>/dev/null || true
 ```
+
+If `brew` itself is missing, MFA can't be auto-installed — fall back to the whisper+silencedetect path (see the fallback bullet below) and tell the user, with the one-line `brew install miniforge` they'd need to unlock MFA precision.
 
 **Per run:**
 ```bash

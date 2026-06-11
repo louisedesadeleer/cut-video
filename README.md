@@ -30,13 +30,7 @@ Specifically, this skill is opinionated about three things most tools get wrong:
 - [Claude Code](https://claude.com/claude-code)
 - `ffmpeg` with `libx264` (`brew install ffmpeg`)
 - [`whisper`](https://github.com/openai/whisper) (`pip install openai-whisper`) — for the transcript text
-- [Montreal Forced Aligner](https://montreal-forced-aligner.readthedocs.io/) via conda — the alignment / timing engine:
-  ```bash
-  conda create -n mfa -c conda-forge montreal-forced-aligner -y
-  conda run -n mfa mfa model download acoustic english_mfa
-  conda run -n mfa mfa model download dictionary english_mfa
-  ```
-  If MFA isn't available, the skill falls back to Whisper word timestamps + ffmpeg `silencedetect` (and says so in the plan).
+- [Montreal Forced Aligner](https://montreal-forced-aligner.readthedocs.io/) — the alignment / timing engine. **The skill installs this for you** on first run (creates a `mfa` conda env and downloads the English model; installs [miniforge](https://github.com/conda-forge/miniforge) via Homebrew if conda is missing). No manual setup needed. If Homebrew isn't available, the skill falls back to Whisper word timestamps + ffmpeg `silencedetect` (and says so in the plan).
 
 ## Install
 
